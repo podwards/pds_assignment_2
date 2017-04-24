@@ -1,69 +1,117 @@
 import copy
+from collections import defaultdict
+
+import pandas as pd
+
+from sklearn import decomposition
+from sklearn.cluster import KMeans, Birch, SpectralClustering
+from sklearn.ensemble import RandomForestClassifier
+
+import plotly.plotly as py
+import plotly.figure_factory as ff
+import plotly.plotly as py
+import plotly.graph_objs as go
+from plotly import tools
+
+import numpy as np
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.datasets import make_moons, make_circles, make_classification
+from sklearn.neural_network import MLPClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
+from sklearn.gaussian_process import GaussianProcessClassifier
+from sklearn.gaussian_process.kernels import RBF
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
+
+
+key_kmeans = 'kmeans'
+key_birch = 'birch'
+key_spectral = 'spectral'
+key_colour = 'color'
+key_labels = 'labels'
+key_random_forest = 'random_forest'
+
 
 class Exploration(object):
-    def __init__(self, raw_df, target_cols):
+    def __init__(self, raw_df, target, exlusions = []):
         """
         This constructor really just needs to take in the dataframe, and separate the data into features and targets.
         TODO: what else can go here?
+        
+        :param raw_df: a Pandas DataFrame that contains both the feature and target information of each element in the data
+        :param target: a string or a list of strings that is (or are) the headings of the target column(s).data
+        :param exlusions: a list of strings that are the heads of columns in the raw_df that shouldn't be considered either 
+                          a feature or a target.
         """
         cols = raw_df.columns
+        
+        if type(target) == str:
+            self.target_key = target
+            target_cols = [target]
+        elif type(target) == list:
+            target_cols = target
+        else:
+            raise ValueError("target needs to be a string or a list of strings that are the columns of the targets.")
 
+
+        raw_df.drop(exlusions, axis=1, in_place=True)
         self._df_class = raw_df[target_cols] # the data frame which consists solely of the target variables
         self._df_attributes = raw_df.drop(target_cols, axis=1) # the data frame which consists soley of the attributes
         
         self.reset_inputs()
         
     def reset_inputs(self):
+        """ This method takes it all back to the start, undoing all the preprocessing etc """
         self.df_class = copy.copy(self._df_class)
         self.df_attributes = copy.copy(self._df_attributes)
+        self.df_pca = None
                 
-    def preprocess_scale(self, scaler, columns = None, **kwargs):
-        """TODO: enforce types"""
-        columns = columns if columns else self.df_attributes.columns
-        self.df_attributes[columns] = scaler.fit_transform(self.df_attributes[columns], **kwargs)
-            
-    def preprocess_normalise(self, normaliser, columns = None, **kwargs):
-        """TODO: enforce types"""
-        columns = columns if columns else self.df_attributes.columns
-        self.df_attributes[columns] = scaler.fit_transform(self.df_attributes[columns], **kwargs)
-            
-    def preprocess(self, function, columns = None):
-        """TODO: enforce types"""
-        columns = columns if columns else self.df_attributes.columns
-        self.df_attributes[columns] = function(self.df_attributes[columns], **kwargs)
+    def preprocess(self, scaler, columns = None, **kwargs):
+        """
+        This method applies a preprocessing function to the data and saves the fit for later use.
         
+        TODO: enforce types
+        TODO: make the fit work later using the fit and transform methods.
+        :param scaler: a function from sklearn.preprocessing
+        :param columns: a list of the columns to receive the preprocessing:
+        """
+        
+        columns = columns if columns else self.df_attributes.columns
+        
+        self.df_attributes[columns] = scaler.fit_transform(self.df_attributes[columns], **kwargs)
+            
     def set_class_to_explore(self, key):
             self.target_key = key
         
-    def pca(self, n):
+    def pca(self, n_components):
+        """
+        Perform PCA on the df_attributes dataframe to n dimensions of the data.
+        
+        TODO: replace with a more general decomposition.
+        
+        :param n_components: an integer specifying the number or components to reduce to.
+        """
         X = self.df_attributes
-        pca = decomposition.PCA(n_components=n)
+        pca = decomposition.PCA(n_components=n_components)
         pca.fit(X)
         X = pca.transform(X)
         self.df_pca = pd.DataFrame(X)
         
-    def _cluster_kmeans(self, **kwargs):
+    def cluster(self, cluster_algo, reduced = False, **kwargs):
+        """
+        Perform a clustering on the df_attributes
+        """
+        if reduced and self.df_pca is None:
+            raise AttributeError("Need to perform dimensionality reduction before doing clustering on reduced data.")
+        data = self.df_pca if reduced else self.df_attributes
         n_clusters = len(set(self.df_class[self.target_key]))
-        kmeans = KMeans(n_clusters=n_clusters, **kwargs).fit(self.df_pca)
-        self.cluster_results = kmeans
-        
-    def _cluster_birch(self, **kwargs):
-        n_clusters = len(set(self.df_class[self.target_key]))
-        birch = Birch(n_clusters=n_clusters, **kwargs).fit(self.df_pca)
-        self.cluster_results = birch
-        
-    def _cluster_spectral(self, **kwargs):
-        n_clusters = len(set(self.df_class[self.target_key]))
-        spectral = SpectralClustering(n_clusters=n_clusters, **kwargs).fit(self.df_pca)
-        self.cluster_results = spectral
-        
-    def cluster(self, algo=key_kmeans, **kwargs):
-        if algo==key_kmeans:
-            self._cluster_kmeans(**kwargs)
-        elif algo==key_birch:
-            self._cluster_birch(**kwargs)
-        elif algo==key_spectral:
-            self._cluster_spectral(**kwargs)
+        cluster_model = cluster_algo(**kwargs)
+        self.cluster_results = cluster_model.fit(data)
         
     def pca_scatter_cluster(self, n = 2, algo = key_kmeans, **kwargs):
         self.pca(n)
@@ -111,6 +159,9 @@ class Exploration(object):
             count_dict[cluster][class_value] += 1
             
         df = pd.DataFrame.from_dict(count_dict)
+        
+        new_df = df.unstack(level=0).reset_index()
+        
         x = 'level_0'
         y = 'level_1'
 
@@ -152,25 +203,11 @@ class Exploration(object):
             )
         )
         fig = go.Figure(data=data, layout=layout)
-        return py.iplot(fig, filename='simple-3d-scatter')        
+        return py.iplot(fig, filename='simple-3d-scatter')
     
-   
-    
-    def classify(self, algo = key_random_forest, train_fraction = 0.9, **kwargs):
+    def classify(self, algo, train_fraction = 0.9, **kwargs):
         
-        classifiers = {
-            'kneighbors': KNeighborsClassifier,
-            'svc_1': SVC,
-            #GaussianProcessClassifier(1.0 * RBF(1.0), warm_start=True),
-            'dec_tree': DecisionTreeClassifier,
-            key_random_forest: RandomForestClassifier,
-            'mlp': MLPClassifier,
-            'ada_boost': AdaBoostClassifier,
-            'guassian_nb': GaussianNB,
-            'quadratic_disc': QuadraticDiscriminantAnalysis
-             }
-            
-        clf = classifiers[algo](**kwargs)
+        clf = algo(**kwargs)
         
         n_train = int(len(self.df_attributes)*train_fraction)
         x_train = self.df_attributes[:n_train]
@@ -185,6 +222,3 @@ class Exploration(object):
         return score
         
         
-        
-def perturb(grid=0.1):
-    return np.random.uniform(low=-grid, high=grid)/2
